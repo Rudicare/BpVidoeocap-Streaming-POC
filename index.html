@@ -2,88 +2,159 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>RudiCare AI Assistant - Streaming POC</title>
+    <title>RudiCare AI Assistant</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
-        #app-container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: inline-block; width: 100%; max-width: 800px; }
-        
-        /* Layout for Video and Avatar */
-        .video-grid { display: flex; gap: 20px; justify-content: center; margin-bottom: 20px; }
-        .video-box { width: 48%; background: #000; border-radius: 12px; overflow: hidden; position: relative; aspect-ratio: 16/9; }
+        #app-container { display: none; background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 100%; max-width: 900px; }
+        #login-container { background: white; padding: 40px; border-radius: 20px; display: inline-block; margin-top: 100px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        .video-grid { display: flex; gap: 20px; justify-content: center; margin-bottom: 20px; align-items: flex-start; }
+        .video-box { width: 48%; background: #000; border-radius: 12px; overflow: hidden; position: relative; min-height: 400px; border: 2px solid #ddd; display: flex; align-items: center; justify-content: center; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        
-        .label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-        #emotion-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; }
-        button { padding: 15px 25px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 10px; border: none; background: #007bff; color: white; width: 200px; }
-        canvas { display: none; } /* Hidden canvas for snapshots */
+        .label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; z-index: 20; }
+        #emotion-display { font-size: 24px; font-weight: bold; color: #007bff; margin-bottom: 20px; }
+        .controls { margin-top: 20px; display: flex; gap: 15px; justify-content: center; }
+        button { padding: 15px 25px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 10px; border: none; transition: 0.3s; }
+        #start-btn { background: #28a745; color: white; }
+        #avatar-btn { background: #007bff; color: white; }
+        #avatar-btn.active { background: #dc3545; }
+        #login-btn { background: #007bff; color: white; margin-top: 10px; }
+        #avatar-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; z-index: 10; }
+        #agent-container { width: 100%; height: 400px; position: absolute; top: 0; left: 0; z-index: 15; display: none; background: #fff; }
+        iframe { width: 100%; height: 100%; border: none; }
+        canvas { display: none; }
+        input { padding: 10px; font-size: 16px; border-radius: 8px; border: 1px solid #ddd; width: 220px; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-    <div id="app-container">
-        <h1>RudiCare Mood-Aware AI</h1>
-        
-        <div id="emotion-display">Detecting Mood: <span id="current-emotion">Waiting...</span></div>
+    <div id="login-container">
+        <form id="login-form">
+            <h2>RudiCare Secure Access</h2>
+            <input type="password" id="pass-input" placeholder="Enter Password" autocomplete="current-password">
+            <br>
+            <button type="submit" id="login-btn">Unlock Assistant</button>
+            <p id="login-error" style="color: red; display: none;">Invalid Password - Access Denied</p>
+        </form>
+    </div>
 
+    <div id="app-container">
+        <h1>RudiCare AI Assistant</h1>
+        <div id="emotion-display">Mood: <span id="current-emotion">Waiting...</span></div>
         <div class="video-grid">
             <div class="video-box">
-                <span class="label">You (Webcam)</span>
+                <span class="label">User (AI Input)</span>
                 <video id="userWebcam" autoplay playsinline muted></video>
             </div>
-            <div class="video-box">
+            <div class="video-box" id="avatar-parent">
                 <span class="label">RudiCare Avatar</span>
-                <video id="remoteVideo" autoplay playsinline></video>
+                <div id="avatar-overlay">AVATAR DISCONNECTED</div>
+                <div id="agent-container"></div>
             </div>
         </div>
-
-        <button id="start-btn">Start Session</button>
+        <div class="controls">
+            <button id="start-btn">1. Start Camera</button>
+            <button id="avatar-btn" disabled>2. Start Avatar Stream</button>
+        </div>
         <canvas id="snapshotCanvas"></canvas>
     </div>
 
     <script>
+        const AVATAR_LAMBDA_URL = "https://mfzcaepxhrcbgpgxyblhn4m4em0dqvfj.lambda-url.us-east-2.on.aws/";
+        const MOOD_URL = "https://gdkau5zbrvyzeagmqrhgtytd4a0qnkwo.lambda-url.us-east-2.on.aws/";
+
+        const loginForm = document.getElementById('login-form');
+        const loginBtn = document.getElementById('login-btn');
+        const loginContainer = document.getElementById('login-container');
+        const appContainer = document.getElementById('app-container');
+        const passInput = document.getElementById('pass-input');
+        const errorText = document.getElementById('login-error');
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            loginBtn.innerText = "Verifying...";
+            errorText.style.display = "none";
+            
+            try {
+                const response = await fetch(AVATAR_LAMBDA_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: passInput.value })
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.status === "authenticated") {
+                    loginContainer.style.display = "none";
+                    appContainer.style.display = "inline-block";
+                } else {
+                    errorText.style.display = "block";
+                    loginBtn.innerText = "Unlock Assistant";
+                }
+            } catch (err) {
+                errorText.innerText = "Auth Error: Check CORS Settings";
+                errorText.style.display = "block";
+                loginBtn.innerText = "Unlock Assistant";
+            }
+        });
+
         const video = document.getElementById('userWebcam');
         const canvas = document.getElementById('snapshotCanvas');
         const emotionText = document.getElementById('current-emotion');
         const startBtn = document.getElementById('start-btn');
-        
-        // YOUR LAMBDA URL (Replace this with your actual Function URL or API Gateway URL)
-        const LAMBDA_ENDPOINT = "https://gdkau5zbrvyzeagmqrhgtytd4a0qnkwo.lambda-url.us-east-2.on.aws/";
+        const avatarBtn = document.getElementById('avatar-btn');
+        const overlay = document.getElementById('avatar-overlay');
+        const agentContainer = document.getElementById('agent-container');
 
-        async function startCamera() {
+        let avatarActive = false;
+        let isDetecting = false;
+
+        async function initSystem() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true });
                 video.srcObject = stream;
-                // Start analyzing every 5 seconds
-                setInterval(captureAndAnalyze, 5000);
-            } catch (err) {
-                console.error("Camera error: ", err);
-            }
+                startBtn.disabled = true;
+                avatarBtn.disabled = false;
+                setInterval(detectMood, 5000);
+            } catch (err) { alert("Camera access denied."); }
         }
 
-        async function captureAndAnalyze() {
-            const context = canvas.getContext('2d');
+        async function detectMood() {
+            if (isDetecting || !video.srcObject) return;
+            isDetecting = true;
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            
-            // Draw current video frame to hidden canvas
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Convert to Base64 for Rekognition
-            const imageData = canvas.toDataURL('image/jpeg').split(',')[1];
-
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
             try {
-                const response = await fetch(LAMBDA_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: json.stringify({ image: imageData })
-                });
+                const response = await fetch(MOOD_URL, { method: 'POST', body: JSON.stringify({ image: base64Image }) });
                 const data = await response.json();
-                emotionText.innerText = data.emotion || "Neutral";
-            } catch (err) {
-                console.error("Analysis failed:", err);
+                if (data.emotion) emotionText.innerText = data.emotion;
+            } catch (e) { console.error("Mood Failed:", e); }
+            finally { isDetecting = false; }
+        }
+
+        function toggleAvatar() {
+            avatarActive = !avatarActive;
+            if (avatarActive) {
+                avatarBtn.innerText = "Stop Avatar Stream";
+                avatarBtn.classList.add('active');
+                overlay.style.display = "none";
+                const iframe = document.createElement('iframe');
+                iframe.src = 'https://bey.chat/4b3f2118-8140-422d-8787-31d476f71305';
+                iframe.allow = 'camera *; microphone *; fullscreen *; display-capture *;';
+                agentContainer.innerHTML = ''; 
+                agentContainer.appendChild(iframe);
+                agentContainer.style.display = "block";
+            } else {
+                avatarBtn.innerText = "Start Avatar Stream";
+                avatarBtn.classList.remove('active');
+                overlay.style.display = "flex";
+                agentContainer.style.display = "none";
+                agentContainer.innerHTML = '';
             }
         }
 
-        startBtn.addEventListener('click', startCamera);
+        startBtn.addEventListener('click', initSystem);
+        avatarBtn.addEventListener('click', toggleAvatar);
     </script>
 </body>
 </html>
