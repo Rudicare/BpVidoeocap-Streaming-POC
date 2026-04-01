@@ -2,103 +2,88 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>RudiCare AI Assistant</title>
+    <title>RudiCare AI Assistant - Streaming POC</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 40px; background: #f0f4f8; }
-        #app-container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: inline-block; width: 100%; max-width: 640px; }
-        #video-container { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; margin-bottom: 20px; overflow: hidden; position: relative; }
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 20px; background: #f0f4f8; }
+        #app-container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: inline-block; width: 100%; max-width: 800px; }
+        
+        /* Layout for Video and Avatar */
+        .video-grid { display: flex; gap: 20px; justify-content: center; margin-bottom: 20px; }
+        .video-box { width: 48%; background: #000; border-radius: 12px; overflow: hidden; position: relative; aspect-ratio: 16/9; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        #mic-bar { position: absolute; bottom: 0; left: 0; height: 8px; background: #28a745; width: 0%; transition: width 0.1s; }
-        #credit-panel { background: #e9ecef; padding: 10px; border-radius: 10px; margin-bottom: 15px; font-weight: bold; color: #495057; display: flex; justify-content: space-around; }
-        .credit-value { color: #dc3545; font-size: 1.2em; }
-        .controls { display: flex; flex-direction: column; gap: 10px; align-items: center; }
-        button { padding: 15px 25px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 10px; border: none; transition: 0.2s; width: 100%; }
-        #start-btn { background: #007bff; color: white; }
-        #stop-btn { background: #dc3545; color: white; display: none; }
-        #status { margin-top: 20px; font-size: 13px; color: #555; background: #f8f9fa; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+        
+        .label { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        #emotion-display { font-size: 24px; font-weight: bold; color: #007bff; margin: 15px 0; }
+        button { padding: 15px 25px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 10px; border: none; background: #007bff; color: white; width: 200px; }
+        canvas { display: none; } /* Hidden canvas for snapshots */
     </style>
 </head>
 <body>
     <div id="app-container">
-        <h1>RudiCare AI</h1>
-        <div id="credit-panel">
-            <div>Balance: <span id="credit-left" class="credit-value">Loading...</span> Credits</div>
+        <h1>RudiCare Mood-Aware AI</h1>
+        
+        <div id="emotion-display">Detecting Mood: <span id="current-emotion">Waiting...</span></div>
+
+        <div class="video-grid">
+            <div class="video-box">
+                <span class="label">You (Webcam)</span>
+                <video id="userWebcam" autoplay playsinline muted></video>
+            </div>
+            <div class="video-box">
+                <span class="label">RudiCare Avatar</span>
+                <video id="remoteVideo" autoplay playsinline></video>
+            </div>
         </div>
-        <div id="video-container">
-            <video id="remoteVideo" autoplay playsinline></video>
-            <div id="mic-bar"></div>
-        </div>
-        <div class="controls">
-            <button id="start-btn">Start Consultation</button>
-            <button id="stop-btn">Stop Session (End Billing)</button>
-        </div>
-        <div id="status">Status: Ready.</div>
+
+        <button id="start-btn">Start Session</button>
+        <canvas id="snapshotCanvas"></canvas>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
     <script>
-        const LAMBDA_URL = 'https://gdkau5zbrvyzeagmqrhgtytd4a0qnkwo.lambda-url.us-east-2.on.aws/';
-        const creditDisplay = document.getElementById('credit-left');
+        const video = document.getElementById('userWebcam');
+        const canvas = document.getElementById('snapshotCanvas');
+        const emotionText = document.getElementById('current-emotion');
         const startBtn = document.getElementById('start-btn');
-        const stopBtn = document.getElementById('stop-btn');
-        const status = document.getElementById('status');
-        const videoElement = document.getElementById('remoteVideo');
-        let room = null;
+        
+        // YOUR LAMBDA URL (Replace this with your actual Function URL or API Gateway URL)
+        const LAMBDA_ENDPOINT = "https://gdkau5zbrvyzeagmqrhgtytd4a0qnkwo.lambda-url.us-east-2.on.aws/";
 
-        // 1. Function to Sync Credits from LiveAvatar App
-        async function fetchCredits() {
+        async function startCamera() {
             try {
-                const res = await fetch(`${LAMBDA_URL}?action=get_credits`);
-                const data = await res.json();
-                if (data.credits_left) {
-                    creditDisplay.innerText = parseFloat(data.credits_left).toFixed(2);
-                }
-            } catch (err) { console.error("Credit sync failed", err); }
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                // Start analyzing every 5 seconds
+                setInterval(captureAndAnalyze, 5000);
+            } catch (err) {
+                console.error("Camera error: ", err);
+            }
         }
 
-        // Run sync every 15 seconds
-        fetchCredits();
-        setInterval(fetchCredits, 15000);
+        async function captureAndAnalyze() {
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Draw current video frame to hidden canvas
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Convert to Base64 for Rekognition
+            const imageData = canvas.toDataURL('image/jpeg').split(',')[1];
 
-        async function endSession() {
-            if (room) { await room.disconnect(); room = null; }
-            stopBtn.style.display = 'none';
-            startBtn.style.display = 'block';
-            status.innerText = "Status: Session Ended. Syncing final balance...";
-            setTimeout(fetchCredits, 2000); // Final sync after disconnect
-        }
-
-        stopBtn.onclick = endSession;
-
-        startBtn.onclick = async () => {
-            status.innerText = "Status: Connecting...";
             try {
-                const response = await fetch(LAMBDA_URL);
-                const tokenResponse = await response.json();
-                const sessionToken = tokenResponse.session_token;
-
-                const startRes = await fetch('https://api.liveavatar.com/v1/sessions/start', {
+                const response = await fetch(LAMBDA_ENDPOINT, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${sessionToken}` }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: json.stringify({ image: imageData })
                 });
-                const startData = await startRes.json();
-                const config = startData.data || startData;
+                const data = await response.json();
+                emotionText.innerText = data.emotion || "Neutral";
+            } catch (err) {
+                console.error("Analysis failed:", err);
+            }
+        }
 
-                room = new LivekitClient.Room();
-                room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
-                    if (track.kind === 'video') track.attach(videoElement);
-                    if (track.kind === 'audio') track.attach();
-                });
-
-                await room.connect(config.livekit_url, config.livekit_client_token);
-                await room.startAudio();
-                await room.localParticipant.setMicrophoneEnabled(true);
-
-                startBtn.style.display = 'none';
-                stopBtn.style.display = 'block';
-                status.innerText = "Status: Live with Rudy.";
-            } catch (err) { status.innerText = "Error: " + err.message; }
-        };
+        startBtn.addEventListener('click', startCamera);
     </script>
 </body>
 </html>
