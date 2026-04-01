@@ -1,0 +1,20 @@
+{
+    "Name": "AvatarProcessor",
+    "Input": {
+        "KinesisVideoStream": {
+            "Arn": "arn:aws:kinesisvideo:us-east-2:777249090794:stream/AvatarUserStream/1743515747683"
+        }
+    },
+    "Output": {
+        "KinesisDataStream": {
+            "Arn": "arn:aws:kinesis:us-east-2:777249090794:stream/AmazonRekognition-AvatarResults"
+        }
+    },
+    "RoleArn": "arn:aws:iam::777249090794:role/Rekognition-Avatar-Role",
+    "Settings": {
+        "FaceSearch": {
+            "CollectionId": "AvatarPoC",
+            "FaceMatchThreshold": 0
+        }
+    }
+}
